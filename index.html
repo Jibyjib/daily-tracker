@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>To-Do + Habit Tracker</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <header class="wrap header">
+    <div>
+      <h1>To-Do + Habit Tracker</h1>
+      <p class="sub">
+        File-backed (Chrome/Edge). Connect a JSON file once; then it autosaves.
+      </p>
+    </div>
+    <div class="header-right">
+      <div class="today">
+        <div class="label">Today</div>
+        <div id="todayStr" class="value"></div>
+      </div>
+
+      <div class="filebox">
+        <button id="connectFileBtn" class="btn">Connect file</button>
+        <div id="fileStatus" class="muted"></div>
+      </div>
+
+      <button id="resetTodayBtn" class="btn danger" title="Uncheck today's habits (keeps history)">Reset Today</button>
+    </div>
+  </header>
+
+  <main class="wrap grid">
+    <!-- HABITS -->
+    <section class="card">
+      <div class="card-head">
+        <h2>Daily Habits</h2>
+        <div class="muted" id="habitSummary"></div>
+      </div>
+
+      <form id="habitForm" class="row" autocomplete="off">
+        <input id="habitName" class="input" placeholder="Add a habit (e.g., Lift, Read, Water)" maxlength="60" />
+        <button class="btn" type="submit">Add</button>
+      </form>
+
+      <div id="habitList" class="list"></div>
+    </section>
+
+    <!-- ONE-OFFS -->
+    <section class="card">
+      <div class="card-head">
+        <h2>One-Off Tasks</h2>
+        <div class="muted" id="taskSummary"></div>
+      </div>
+
+      <form id="taskForm" class="stack" autocomplete="off">
+        <div class="row">
+          <input id="taskName" class="input" placeholder="Add a task (e.g., submit form, buy groceries)" maxlength="80" />
+          <button class="btn" type="submit">Add</button>
+        </div>
+        <div class="row">
+          <label class="inline">
+            <span class="muted">Due (optional)</span>
+            <input id="taskDue" class="input" type="date" />
+          </label>
+          <label class="inline">
+            <span class="muted">Category (optional)</span>
+            <input id="taskCat" class="input" placeholder="work / life / admin" maxlength="30" />
+          </label>
+        </div>
+      </form>
+
+      <div class="row between">
+        <div class="chips" id="taskFilters"></div>
+        <div class="row">
+          <button id="clearDoneTasksBtn" class="btn ghost">Clear completed</button>
+        </div>
+      </div>
+
+      <div id="taskList" class="list"></div>
+    </section>
+
+    <!-- STATS -->
+    <section class="card span2">
+      <div class="card-head">
+        <h2>Habit Stats (look-back)</h2>
+        <div class="muted">Completion is tracked per-day for each habit.</div>
+      </div>
+
+      <div class="stats-grid">
+        <div class="stat">
+          <div class="k">Last 7 days</div>
+          <div class="v" id="stat7">—</div>
+        </div>
+        <div class="stat">
+          <div class="k">Last 30 days</div>
+          <div class="v" id="stat30">—</div>
+        </div>
+        <div class="stat">
+          <div class="k">Last 90 days</div>
+          <div class="v" id="stat90">—</div>
+        </div>
+        <div class="stat">
+          <div class="k">Overall</div>
+          <div class="v" id="statAll">—</div>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="row between wrapline">
+        <div class="muted">
+          If file access isn’t available, it falls back to browser storage.
+        </div>
+        <div class="row">
+          <button id="exportBtn" class="btn ghost">Export JSON</button>
+          <button id="importBtn" class="btn ghost">Import JSON</button>
+          <input id="importFile" type="file" accept="application/json" hidden />
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <details>
+        <summary>Danger zone</summary>
+        <div class="row between">
+          <div class="muted">Deletes all habits, tasks, and history (and clears the connected file reference).</div>
+          <button id="wipeBtn" class="btn danger">Wipe all data</button>
+        </div>
+      </details>
+    </section>
+  </main>
+
+  <footer class="wrap footer muted">
+    Stored in a JSON file if connected; otherwise localStorage.
+  </footer>
+
+  <script src="./app.js"></script>
+</body>
+</html>
