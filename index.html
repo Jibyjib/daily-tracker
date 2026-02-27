@@ -3,136 +3,164 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>To-Do + Habit Tracker</title>
+  <title>To-Do + Habit + Timed Tracker</title>
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
-  <header class="wrap header">
-    <div>
-      <h1>To-Do + Habit Tracker</h1>
-      <p class="sub">
-        File-backed (Chrome/Edge). Connect a JSON file once; then it autosaves.
-      </p>
+  <div class="wrap">
+    <div class="header">
+      <div>
+        <h1>To-Do + Habit + Timed Tracker</h1>
+        <p class="sub">File-backed (Chrome/Edge). Connect a JSON file once; then it autosaves.</p>
+      </div>
+
+      <div class="header-right">
+        <div class="today">
+          <div class="label">Today</div>
+          <div class="value" id="todayStr">—</div>
+        </div>
+
+        <div class="filebox">
+          <div class="row wrapline" style="justify-content:flex-end; gap:8px;">
+            <button class="btn" id="connectFileBtn" type="button">Connect file</button>
+            <button class="btn ghost" id="resetTodayBtn" type="button">Reset Today</button>
+          </div>
+          <div class="muted" id="fileStatus">—</div>
+        </div>
+      </div>
     </div>
-    <div class="header-right">
-      <div class="today">
-        <div class="label">Today</div>
-        <div id="todayStr" class="value"></div>
+
+    <div class="grid">
+      <!-- Timed Activities -->
+      <div class="card span2">
+        <div class="card-head">
+          <h2>Timed Activities (Pomodoro / Minutes)</h2>
+          <div class="muted" id="activitySummary">—</div>
+        </div>
+
+        <form id="activityForm" class="row wrapline" style="align-items:flex-end;">
+          <div class="inline" style="min-width:220px;">
+            <input id="activityName" class="input" placeholder="New activity (e.g., Cardio, Reading)" />
+          </div>
+
+          <div class="inline" style="max-width:140px;">
+            <label class="mini-label">Star steps</label>
+            <input id="activityTarget" class="input" type="number" min="1" max="12" value="5" />
+          </div>
+
+          <div class="inline" style="max-width:140px;">
+            <label class="mini-label">Work (min)</label>
+            <input id="activityWork" class="input" type="number" min="1" max="180" value="25" />
+          </div>
+
+          <div class="inline" style="max-width:140px;">
+            <label class="mini-label">Break (min)</label>
+            <input id="activityBreak" class="input" type="number" min="0" max="60" value="5" />
+          </div>
+
+          <div>
+            <button class="btn" type="submit">Add</button>
+          </div>
+        </form>
+
+        <div class="divider"></div>
+
+        <div class="timer">
+          <div class="timer-left">
+            <div class="timer-title" id="timerTitle">No timer running</div>
+            <div class="timer-meta">
+              <span class="pill" id="timerMode">—</span>
+              <span class="pill" id="timerRemaining">—</span>
+            </div>
+          </div>
+          <div class="timer-actions">
+            <button class="btn" id="timerStartPauseBtn" type="button" disabled>Start</button>
+            <button class="btn ghost" id="timerSkipBtn" type="button" disabled>Skip</button>
+            <button class="btn danger" id="timerStopBtn" type="button" disabled>Stop</button>
+          </div>
+        </div>
+
+        <div class="list" id="activityList"></div>
       </div>
 
-      <div class="filebox">
-        <button id="connectFileBtn" class="btn">Connect file</button>
-        <div id="fileStatus" class="muted"></div>
-      </div>
+      <!-- Habits -->
+      <div class="card">
+        <div class="card-head">
+          <h2>Daily Habits</h2>
+          <div class="muted" id="habitSummary">—</div>
+        </div>
 
-      <button id="resetTodayBtn" class="btn danger" title="Uncheck today's habits (keeps history)">Reset Today</button>
-    </div>
-  </header>
-
-  <main class="wrap grid">
-    <!-- HABITS -->
-    <section class="card">
-      <div class="card-head">
-        <h2>Daily Habits</h2>
-        <div class="muted" id="habitSummary"></div>
-      </div>
-
-      <form id="habitForm" class="row" autocomplete="off">
-        <input id="habitName" class="input" placeholder="Add a habit (e.g., Lift, Read, Water)" maxlength="60" />
-        <button class="btn" type="submit">Add</button>
-      </form>
-
-      <div id="habitList" class="list"></div>
-    </section>
-
-    <!-- ONE-OFFS -->
-    <section class="card">
-      <div class="card-head">
-        <h2>One-Off Tasks</h2>
-        <div class="muted" id="taskSummary"></div>
-      </div>
-
-      <form id="taskForm" class="stack" autocomplete="off">
-        <div class="row">
-          <input id="taskName" class="input" placeholder="Add a task (e.g., submit form, buy groceries)" maxlength="80" />
+        <form id="habitForm" class="row">
+          <input id="habitName" class="input" placeholder="New habit (e.g., Meditate)" />
           <button class="btn" type="submit">Add</button>
+        </form>
+
+        <div class="list" id="habitList"></div>
+      </div>
+
+      <!-- Tasks -->
+      <div class="card">
+        <div class="card-head">
+          <h2>One-Off Tasks</h2>
+          <div class="muted" id="taskSummary">—</div>
         </div>
-        <div class="row">
-          <label class="inline">
-            <span class="muted">Due (optional)</span>
+
+        <form id="taskForm" class="stack">
+          <div class="row wrapline">
+            <input id="taskName" class="input" placeholder="New task" />
+            <button class="btn" type="submit">Add</button>
+          </div>
+          <div class="row wrapline">
             <input id="taskDue" class="input" type="date" />
-          </label>
-          <label class="inline">
-            <span class="muted">Category (optional)</span>
-            <input id="taskCat" class="input" placeholder="work / life / admin" maxlength="30" />
-          </label>
-        </div>
-      </form>
+            <input id="taskCat" class="input" placeholder="Category (optional)" />
+          </div>
+        </form>
 
-      <div class="row between">
-        <div class="chips" id="taskFilters"></div>
-        <div class="row">
-          <button id="clearDoneTasksBtn" class="btn ghost">Clear completed</button>
+        <div class="row between wrapline" style="margin-top:10px;">
+          <div class="chips" id="taskFilters"></div>
+          <button class="btn ghost" id="clearDoneTasksBtn" type="button">Clear completed</button>
         </div>
+
+        <div class="list" id="taskList"></div>
       </div>
 
-      <div id="taskList" class="list"></div>
-    </section>
+      <!-- Stats -->
+      <div class="card span2">
+        <div class="card-head">
+          <h2>Habit Stats (look-back)</h2>
+          <div class="muted">Completion is tracked per-day for each habit.</div>
+        </div>
 
-    <!-- STATS -->
-    <section class="card span2">
-      <div class="card-head">
-        <h2>Habit Stats (look-back)</h2>
-        <div class="muted">Completion is tracked per-day for each habit.</div>
+        <div class="stats-grid">
+          <div class="stat"><div class="k">Last 7 days</div><div class="v" id="stat7">—</div></div>
+          <div class="stat"><div class="k">Last 30 days</div><div class="v" id="stat30">—</div></div>
+          <div class="stat"><div class="k">Last 90 days</div><div class="v" id="stat90">—</div></div>
+          <div class="stat"><div class="k">Overall</div><div class="v" id="statAll">—</div></div>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="row between wrapline">
+          <div class="muted">If file access isn’t available, it falls back to browser storage.</div>
+          <div class="row wrapline" style="justify-content:flex-end;">
+            <button class="btn ghost" id="exportBtn" type="button">Export JSON</button>
+            <button class="btn ghost" id="importBtn" type="button">Import JSON</button>
+            <input id="importFile" type="file" accept="application/json" hidden />
+          </div>
+        </div>
+
+        <details style="margin-top:12px;">
+          <summary>Danger zone</summary>
+          <div class="stack" style="margin-top:10px;">
+            <div class="muted">Deletes all habits, tasks, activities, and history (and clears the connected file reference).</div>
+            <button class="btn danger" id="wipeBtn" type="button">Wipe all data</button>
+          </div>
+        </details>
+
+        <div class="footer muted">Stored in a JSON file if connected; otherwise localStorage.</div>
       </div>
-
-      <div class="stats-grid">
-        <div class="stat">
-          <div class="k">Last 7 days</div>
-          <div class="v" id="stat7">—</div>
-        </div>
-        <div class="stat">
-          <div class="k">Last 30 days</div>
-          <div class="v" id="stat30">—</div>
-        </div>
-        <div class="stat">
-          <div class="k">Last 90 days</div>
-          <div class="v" id="stat90">—</div>
-        </div>
-        <div class="stat">
-          <div class="k">Overall</div>
-          <div class="v" id="statAll">—</div>
-        </div>
-      </div>
-
-      <div class="divider"></div>
-
-      <div class="row between wrapline">
-        <div class="muted">
-          If file access isn’t available, it falls back to browser storage.
-        </div>
-        <div class="row">
-          <button id="exportBtn" class="btn ghost">Export JSON</button>
-          <button id="importBtn" class="btn ghost">Import JSON</button>
-          <input id="importFile" type="file" accept="application/json" hidden />
-        </div>
-      </div>
-
-      <div class="divider"></div>
-
-      <details>
-        <summary>Danger zone</summary>
-        <div class="row between">
-          <div class="muted">Deletes all habits, tasks, and history (and clears the connected file reference).</div>
-          <button id="wipeBtn" class="btn danger">Wipe all data</button>
-        </div>
-      </details>
-    </section>
-  </main>
-
-  <footer class="wrap footer muted">
-    Stored in a JSON file if connected; otherwise localStorage.
-  </footer>
+    </div>
+  </div>
 
   <script src="./app.js"></script>
 </body>
