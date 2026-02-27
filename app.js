@@ -1,11 +1,12 @@
+// app.js
 /*
-  To-Do + Habit Tracker + Timed Activities (Pomodoro + minutes)
+  To-Do + Habit Tracker + Timed Activities (Pomodoro + minutes) + Cardio Logs + Calendar + Day Details modal
   - File-backed via File System Access API (Chrome/Edge)
   - Falls back to localStorage
 */
 
-const LS_KEY = "todo_habit_tracker_v1";
-const LS_FILE_HINT_KEY = "todo_habit_tracker_file_hint_v1";
+const LS_KEY = "todo_habit_tracker_v2";
+const LS_FILE_HINT_KEY = "todo_habit_tracker_file_hint_v2";
 
 function uid() {
   return Math.random().toString(16).slice(2) + "-" + Date.now().toString(16);
@@ -22,9 +23,7 @@ function todayISO() {
 function formatNiceDate(iso) {
   const [y, m, d] = iso.split("-").map(Number);
   const dt = new Date(y, m - 1, d);
-  return dt.toLocaleDateString(undefined, {
-    weekday: "short", year: "numeric", month: "short", day: "numeric",
-  });
+  return dt.toLocaleDateString(undefined, { weekday: "short", year: "numeric", month: "short", day: "numeric" });
 }
 
 function escapeHtml(s) {
@@ -53,6 +52,40 @@ function isoRangeEndInclusive(endISO, daysBack) {
   return { start, end: endISO };
 }
 
+function clampInt(x, lo, hi, fallback) {
+  const n = Number(x);
+  if (!Number.isFinite(n)) return fallback;
+  const k = Math.floor(n);
+  return Math.max(lo, Math.min(hi, k));
+}
+
+function pomosToStars(pomos) {
+  return (Number(pomos || 0) / 5);
+}
+
+function starRunHTML(starsFloat) {
+  const stars = Math.max(0, Number(starsFloat || 0));
+  const nFull = Math.floor(stars);
+  const frac = stars - nFull;
+
+  const full = "★".repeat(Math.min(nFull, 80)); // safety cap
+
+  if (frac <= 1e-6) {
+    return `<span class="star-run" title="${stars.toFixed(1)} stars">${full || ""}</span>`;
+  }
+
+  const pct = Math.round(frac * 100);
+  return `
+    <span class="star-run" title="${stars.toFixed(1)} stars">
+      ${full}
+      <span class="star-part">
+        <span class="star-part-fill" style="width:${pct}%">★</span>
+        <span class="star-part-mask">★</span>
+      </span>
+    </span>
+  `;
+}
+
 /* ---------- State ---------- */
 
 const DEFAULT_STATE = () => ({
@@ -64,8 +97,11 @@ const DEFAULT_STATE = () => ({
   tasks: [],
   taskFilter: "all",
   activities: [
-    // { id, name, targetPomos, workMin, breakMin, log: { "YYYY-MM-DD": { pomos, minutes, cardio: [] } } }
+    // { id, name, workMin, breakMin, log: { "YYYY-MM-DD": { pomos, minutes } } }
   ],
+  cardio: {
+    // "YYYY-MM-DD": [{ ts, distance_km, duration_min, elev_m, calories }]
+  },
 });
 
 const hasFSA = !!window.showOpenFilePicker;
@@ -76,6 +112,25 @@ const TODAY = todayISO();
 
 /* ---------- Storage Layer ---------- */
 
+function normalizeState(parsed) {
+  parsed.habits ??= [];
+  parsed.tasks ??= [];
+  parsed.taskFilter ??= "all";
+  parsed.activities ??= [];
+  parsed.cardio ??= {};
+
+  // Back-compat: if tasks existed without doneAt, keep blank
+  for (const t of parsed.tasks) {
+    t.done ??= false;
+    t.doneAt ??= "";
+  }
+  // Back-compat: activity logs
+  for (const a of parsed.activities) {
+    a.log ??= {};
+  }
+  return parsed;
+}
+
 function loadLocalStorageState() {
   const raw = localStorage.getItem(LS_KEY);
   if (!raw) {
@@ -83,14 +138,8 @@ function loadLocalStorageState() {
     localStorage.setItem(LS_KEY, JSON.stringify(seed));
     return seed;
   }
-
   try {
-    const parsed = JSON.parse(raw);
-    parsed.habits ??= [];
-    parsed.tasks ??= [];
-    parsed.taskFilter ??= "all";
-    parsed.activities ??= [];
-    return parsed;
+    return normalizeState(JSON.parse(raw));
   } catch {
     localStorage.removeItem(LS_KEY);
     const seed = DEFAULT_STATE();
@@ -112,10 +161,7 @@ async function readStateFromFile(handle) {
   if (!Array.isArray(parsed.habits) || !Array.isArray(parsed.tasks)) {
     throw new Error("Missing habits/tasks arrays");
   }
-
-  parsed.taskFilter ??= "all";
-  parsed.activities ??= [];
-  return parsed;
+  return normalizeState(parsed);
 }
 
 async function writeStateToFile(handle, s) {
@@ -209,7 +255,6 @@ const elFileStatus = document.getElementById("fileStatus");
 /* Timed activities */
 const elActivityForm = document.getElementById("activityForm");
 const elActivityName = document.getElementById("activityName");
-const elActivityTarget = document.getElementById("activityTarget");
 const elActivityWork = document.getElementById("activityWork");
 const elActivityBreak = document.getElementById("activityBreak");
 const elActivityList = document.getElementById("activityList");
@@ -222,18 +267,52 @@ const elTimerStartPauseBtn = document.getElementById("timerStartPauseBtn");
 const elTimerSkipBtn = document.getElementById("timerSkipBtn");
 const elTimerStopBtn = document.getElementById("timerStopBtn");
 
+const elAddCardioBtn = document.getElementById("addCardioBtn");
+
+/* Calendar */
+const elCalendarGrid = document.getElementById("calendarGrid");
+const elCalMonthLabel = document.getElementById("calMonthLabel");
+const elCalPrevBtn = document.getElementById("calPrevBtn");
+const elCalNextBtn = document.getElementById("calNextBtn");
+
+/* Day modal */
+const elDayModal = document.getElementById("dayModal");
+const elDayModalBackdrop = document.getElementById("dayModalBackdrop");
+const elDayModalCloseBtn = document.getElementById("dayModalCloseBtn");
+const elDayModalPrevBtn = document.getElementById("dayModalPrevBtn");
+const elDayModalNextBtn = document.getElementById("dayModalNextBtn");
+
+const elDayModalTitle = document.getElementById("dayModalTitle");
+const elDayModalSubtitle = document.getElementById("dayModalSubtitle");
+const elDayModalSummary = document.getElementById("dayModalSummary");
+
+const elDayHabitsLine = document.getElementById("dayHabitsLine");
+const elDayHabitsList = document.getElementById("dayHabitsList");
+
+const elDayPomoLine = document.getElementById("dayPomoLine");
+const elDayPomoList = document.getElementById("dayPomoList");
+
+const elDayTasksLine = document.getElementById("dayTasksLine");
+const elDayTasksList = document.getElementById("dayTasksList");
+
+const elDayCardioLine = document.getElementById("dayCardioLine");
+const elDayCardioList = document.getElementById("dayCardioList");
+
 /* ---------- Init ---------- */
 
 elTodayStr.textContent = formatNiceDate(TODAY);
 state = loadLocalStorageState();
-state.activities ??= [];
 
 setStatus(hasFSA ? "Not connected • using localStorage" : "File API not available • using localStorage");
 
 /* ---------- Habits ---------- */
 
+function habitCheckedOnDay(habit, iso) {
+  return habit.history?.[iso] === true;
+}
+
 function habitCheckedToday(habit) {
-  return habit.history?.[TODAY] === true;
+  return habitCheckedOnDay(habit, TODAY);
 }
 
 function currentStreak(h) {
@@ -394,6 +473,7 @@ function renderTasks() {
     check.title = "Toggle";
     check.addEventListener("click", async () => {
       t.done = !t.done;
+      t.doneAt = t.done ? TODAY : "";
       await persist();
       renderAll();
     });
@@ -408,6 +488,7 @@ function renderTasks() {
       const tag = taskIsOverdue(t) ? `Overdue • ${escapeHtml(dueNice)}` : `Due ${escapeHtml(dueNice)}`;
       metaBits.push(tag);
     }
+    if (t.done && t.doneAt) metaBits.push(`Done ${escapeHtml(formatNiceDate(t.doneAt))}`);
 
     title.innerHTML = `
       <div class="name">${escapeHtml(t.name)}</div>
@@ -483,33 +564,38 @@ function renderStats() {
   elStatAll.textContent = sall.pct == null ? "—" : `${sall.pct}% (${sall.hits}/${sall.possible})`;
 }
 
+/* ---------- Cardio ---------- */
+
+function ensureCardioDay(iso) {
+  state.cardio ??= {};
+  state.cardio[iso] ??= [];
+  return state.cardio[iso];
+}
+
+function cardioTotalsForDay(iso) {
+  const arr = state.cardio?.[iso] || [];
+  let km = 0, min = 0, elev = 0, cal = 0;
+  for (const e of arr) {
+    km += Number(e.distance_km || 0);
+    min += Number(e.duration_min || 0);
+    elev += Number(e.elev_m || 0);
+    cal += Number(e.calories || 0);
+  }
+  return { km, min, elev, cal, count: arr.length };
+}
+
 /* ---------- Timed Activities ---------- */
 
-function ensureTodayLog(a) {
+function ensureDayLog(a, iso) {
   a.log ??= {};
-  a.log[TODAY] ??= { pomos: 0, minutes: 0, cardio: [] };
-  a.log[TODAY].pomos ??= 0;
-  a.log[TODAY].minutes ??= 0;
-  a.log[TODAY].cardio ??= [];
-  return a.log[TODAY];
+  a.log[iso] ??= { pomos: 0, minutes: 0 };
+  a.log[iso].pomos ??= 0;
+  a.log[iso].minutes ??= 0;
+  return a.log[iso];
 }
 
-function clampInt(x, lo, hi, fallback) {
-  const n = Number(x);
-  if (!Number.isFinite(n)) return fallback;
-  const k = Math.floor(n);
-  return Math.max(lo, Math.min(hi, k));
-}
-
-function starsHTML(done, target) {
-  const full = "★★★★★";
-  const frac = target <= 0 ? 0 : Math.max(0, Math.min(1, done / target));
-  const pct = Math.round(frac * 100);
-  return `
-    <span class="stars" title="${done}/${target}">
-      <span class="fill" style="width:${pct}%">${full}</span>${full}
-    </span>
-  `;
+function ensureTodayLog(a) {
+  return ensureDayLog(a, TODAY);
 }
 
 /* Timer model: single active timer */
@@ -518,7 +604,7 @@ let timer = {
   mode: "work",          // "work" | "break"
   remainingSec: 0,
   running: false,
-  startedAtMs: null,     // for partial credit if stopped early
+  startedAtMs: null,
   workSec: 25 * 60,
   breakSec: 5 * 60,
 };
@@ -552,11 +638,11 @@ function selectTimerActivity(activityId) {
   renderTimer();
 }
 
-async function creditWorkSession(activityId, minutes, pomosInc) {
+async function creditWorkSession(activityId, minutes, pomosInc, iso = TODAY) {
   const a = getActivityById(activityId);
   if (!a) return;
 
-  const log = ensureTodayLog(a);
+  const log = ensureDayLog(a, iso);
   log.minutes += minutes;
   log.pomos += pomosInc;
 
@@ -587,7 +673,7 @@ async function stopTimer({ creditPartial = false } = {}) {
   if (creditPartial && timer.mode === "work" && timer.running && timer.startedAtMs) {
     const elapsedMin = Math.max(0, Math.round((Date.now() - timer.startedAtMs) / 60000));
     if (elapsedMin > 0) {
-      await creditWorkSession(timer.activityId, elapsedMin, 0);
+      await creditWorkSession(timer.activityId, elapsedMin, 0, TODAY);
     }
   }
 
@@ -602,7 +688,6 @@ async function stopTimer({ creditPartial = false } = {}) {
 async function skipTimerPhase() {
   if (!timer.activityId) return;
 
-  // If skipping work phase, don't credit.
   timer.running = false;
   timer.startedAtMs = null;
 
@@ -618,7 +703,7 @@ async function skipTimerPhase() {
 }
 
 async function onWorkComplete() {
-  await creditWorkSession(timer.activityId, Math.round(timer.workSec / 60), 1);
+  await creditWorkSession(timer.activityId, Math.round(timer.workSec / 60), 1, TODAY);
   timer.mode = "break";
   timer.remainingSec = timer.breakSec;
   timer.running = false;
@@ -643,11 +728,8 @@ function tick() {
     timer.running = false;
     timer.startedAtMs = null;
 
-    if (mode === "work") {
-      onWorkComplete();
-    } else {
-      onBreakComplete();
-    }
+    if (mode === "work") onWorkComplete();
+    else onBreakComplete();
   }
   renderTimer();
 }
@@ -677,6 +759,7 @@ function renderTimer() {
   elTimerStartPauseBtn.textContent = timer.running ? "Pause" : "Start";
 }
 
+/* UPDATED renderActivities (stars are derived: 1 pomo = 0.2 star; no grey placeholders; no cardio here) */
 function renderActivities() {
   const total = state.activities.length;
   let totalMinToday = 0;
@@ -690,15 +773,17 @@ function renderActivities() {
     }
   }
 
+  const totalStarsToday = pomosToStars(totalPomosToday);
+
   elActivitySummary.textContent =
     total === 0
       ? "No activities yet."
-      : `${totalPomosToday} pomos • ${totalMinToday} min today`;
+      : `${totalPomosToday} pomos • ${totalStarsToday.toFixed(1)} stars • ${totalMinToday} min today`;
 
   elActivityList.innerHTML = "";
 
   if (total === 0) {
-    elActivityList.innerHTML = `<div class="muted">Add an activity above (Reading, Cardio, etc.).</div>`;
+    elActivityList.innerHTML = `<div class="muted">Add an activity above (Reading, Deep Work, etc.).</div>`;
     return;
   }
 
@@ -713,13 +798,14 @@ function renderActivities() {
     title.className = "item-title";
 
     const log = ensureTodayLog(a);
-    const target = clampInt(a.targetPomos, 1, 12, 5);
+    const stars = pomosToStars(log.pomos);
 
     const meta = document.createElement("div");
     meta.className = "meta kv";
     meta.innerHTML = `
-      ${starsHTML(log.pomos, target)}
-      <span class="pill"><strong>${log.pomos}</strong> / ${target} pomos</span>
+      ${starRunHTML(stars)}
+      <span class="pill"><strong>${log.pomos}</strong> pomos</span>
+      <span class="pill"><strong>${stars.toFixed(1)}</strong> stars</span>
       <span class="pill"><strong>${log.minutes}</strong> min</span>
       <span class="pill">${clampInt(a.workMin, 1, 180, 25)}m work</span>
       <span class="pill">${clampInt(a.breakMin, 0, 60, 5)}m break</span>
@@ -757,7 +843,7 @@ function renderActivities() {
     btnPomo.type = "button";
     btnPomo.textContent = "+1 pomo";
     btnPomo.addEventListener("click", async () => {
-      await creditWorkSession(a.id, clampInt(a.workMin, 1, 180, 25), 1);
+      await creditWorkSession(a.id, clampInt(a.workMin, 1, 180, 25), 1, TODAY);
     });
 
     const btnMinutes = document.createElement("button");
@@ -768,40 +854,7 @@ function renderActivities() {
       const raw = prompt(`Add minutes for "${a.name}" today:`, "30");
       if (raw == null) return;
       const mins = clampInt(raw, 1, 1440, 30);
-      await creditWorkSession(a.id, mins, 0);
-    });
-
-    const btnCardio = document.createElement("button");
-    btnCardio.className = "btn ghost";
-    btnCardio.type = "button";
-    btnCardio.textContent = "Cardio log";
-    btnCardio.addEventListener("click", async () => {
-      const dist = prompt("Distance (km), optional:", "");
-      if (dist == null) return;
-      const dur = prompt("Duration (minutes):", "30");
-      if (dur == null) return;
-      const kind = prompt("Type (run/bike/row/etc), optional:", "");
-      if (kind == null) return;
-
-      const a2 = getActivityById(a.id);
-      if (!a2) return;
-      const log2 = ensureTodayLog(a2);
-
-      const entry = {
-        ts: Date.now(),
-        type: (kind || "").trim(),
-        distance_km: dist === "" ? null : Number(dist),
-        duration_min: Number(dur),
-      };
-
-      log2.cardio.push(entry);
-      // Credit duration as minutes (no auto pomo unless you want)
-      if (Number.isFinite(entry.duration_min) && entry.duration_min > 0) {
-        log2.minutes += Math.floor(entry.duration_min);
-      }
-
-      await persist();
-      renderAll();
+      await creditWorkSession(a.id, mins, 0, TODAY);
     });
 
     const btnDel = document.createElement("button");
@@ -811,7 +864,6 @@ function renderActivities() {
     btnDel.addEventListener("click", async () => {
       if (!confirm(`Delete activity "${a.name}"? This removes all its logs.`)) return;
 
-      // If timer is on this activity, clear it
       if (timer.activityId === a.id) {
         timer.activityId = null;
         timer.running = false;
@@ -829,7 +881,6 @@ function renderActivities() {
     actions.appendChild(btnStop);
     actions.appendChild(btnPomo);
     actions.appendChild(btnMinutes);
-    actions.appendChild(btnCardio);
     actions.appendChild(btnDel);
 
     left.appendChild(title);
@@ -841,6 +892,257 @@ function renderActivities() {
 
   renderTimer();
 }
+
+/* ---------- Calendar + Day Details ---------- */
+
+let calYear = new Date().getFullYear();
+let calMonth = new Date().getMonth(); // 0..11
+
+function monthLabel(y, m0) {
+  const d = new Date(y, m0, 1);
+  return d.toLocaleDateString(undefined, { year: "numeric", month: "long" });
+}
+
+function isoFromYMD(y, m0, d) {
+  const mm = String(m0 + 1).padStart(2, "0");
+  const dd = String(d).padStart(2, "0");
+  return `${y}-${mm}-${dd}`;
+}
+
+function daysInMonth(y, m0) {
+  return new Date(y, m0 + 1, 0).getDate();
+}
+
+function firstWeekday(y, m0) {
+  return new Date(y, m0, 1).getDay(); // 0=Sun
+}
+
+function habitsDoneTotalForDay(iso) {
+  const total = state.habits.length;
+  let done = 0;
+  for (const h of state.habits) {
+    if (habitCheckedOnDay(h, iso)) done += 1;
+  }
+  return { done, total };
+}
+
+function pomosAndStarsForDay(iso) {
+  let pomos = 0;
+  let minutes = 0;
+  for (const a of state.activities) {
+    const log = a.log?.[iso];
+    if (log) {
+      pomos += Number(log.pomos || 0);
+      minutes += Number(log.minutes || 0);
+    }
+  }
+  return { pomos, stars: pomosToStars(pomos), minutes };
+}
+
+function tasksDoneCountForDay(iso) {
+  return state.tasks.filter(t => t.done && t.doneAt === iso).length;
+}
+
+function renderCalendar() {
+  if (!elCalendarGrid) return;
+
+  elCalMonthLabel.textContent = monthLabel(calYear, calMonth);
+
+  const offset = firstWeekday(calYear, calMonth);
+  const nDays = daysInMonth(calYear, calMonth);
+
+  elCalendarGrid.innerHTML = "";
+
+  for (let i = 0; i < offset; i++) {
+    const blank = document.createElement("div");
+    blank.className = "daycell dim";
+    blank.tabIndex = -1;
+    blank.innerHTML = `<div class="daynum"><span>—</span><span class="tag"></span></div>`;
+    elCalendarGrid.appendChild(blank);
+  }
+
+  for (let d = 1; d <= nDays; d++) {
+    const iso = isoFromYMD(calYear, calMonth, d);
+
+    const { done, total } = habitsDoneTotalForDay(iso);
+    const { pomos, stars } = pomosAndStarsForDay(iso);
+    const cardio = cardioTotalsForDay(iso);
+    const z = tasksDoneCountForDay(iso);
+
+    const cell = document.createElement("div");
+    cell.className = "daycell" + (iso === TODAY ? " today" : "");
+    cell.tabIndex = 0;
+
+    cell.innerHTML = `
+      <div class="daynum">
+        <span>${d}</span>
+        ${z > 0 ? `<span class="tag">+${z}</span>` : `<span class="tag"> </span>`}
+      </div>
+
+      <div class="daymetrics">
+        <div class="line"><span>Habits</span><span class="val">${done}/${total}</span></div>
+        <div class="line"><span>Pomo</span><span class="val">${starRunHTML(stars)} <span style="opacity:.85">${stars.toFixed(1)}</span></span></div>
+        <div class="line"><span>Cardio</span><span class="val">${cardio.km > 0 ? cardio.km.toFixed(1) + " km" : "—"}</span></div>
+      </div>
+    `;
+
+    cell.addEventListener("click", () => openDayModal(iso));
+    cell.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        openDayModal(iso);
+      }
+    });
+
+    elCalendarGrid.appendChild(cell);
+  }
+}
+
+elCalPrevBtn?.addEventListener("click", () => {
+  calMonth -= 1;
+  if (calMonth < 0) { calMonth = 11; calYear -= 1; }
+  renderCalendar();
+});
+elCalNextBtn?.addEventListener("click", () => {
+  calMonth += 1;
+  if (calMonth > 11) { calMonth = 0; calYear += 1; }
+  renderCalendar();
+});
+
+/* Day modal */
+let modalISO = TODAY;
+
+function openDayModal(iso) {
+  modalISO = iso;
+  elDayModal.hidden = false;
+  renderDayModal();
+}
+
+function closeDayModal() {
+  elDayModal.hidden = true;
+}
+
+function renderDayModal() {
+  const iso = modalISO;
+
+  elDayModalTitle.textContent = "Day Details";
+  elDayModalSubtitle.textContent = formatNiceDate(iso);
+
+  const { done, total } = habitsDoneTotalForDay(iso);
+  const { pomos, stars, minutes } = pomosAndStarsForDay(iso);
+  const cardio = cardioTotalsForDay(iso);
+  const z = tasksDoneCountForDay(iso);
+
+  elDayModalSummary.innerHTML = `
+    <span class="pill">Habits <strong style="color:var(--text)">${done}/${total}</strong></span>
+    <span class="pill">Pomos <strong style="color:var(--text)">${pomos}</strong></span>
+    <span class="pill">Stars <strong style="color:var(--text)">${stars.toFixed(1)}</strong> ${starRunHTML(stars)}</span>
+    <span class="pill">Pomo minutes <strong style="color:var(--text)">${minutes}</strong></span>
+    <span class="pill">Cardio <strong style="color:var(--text)">${cardio.km > 0 ? cardio.km.toFixed(1) + " km" : "—"}</strong></span>
+    <span class="pill">Tasks done <strong style="color:var(--text)">${z}</strong></span>
+  `;
+
+  // Habits list
+  elDayHabitsLine.textContent = `${done}/${total} done`;
+  elDayHabitsList.innerHTML = "";
+  if (state.habits.length === 0) {
+    elDayHabitsList.innerHTML = `<div class="muted">No habits yet.</div>`;
+  } else {
+    for (const h of state.habits) {
+      const on = habitCheckedOnDay(h, iso);
+      const row = document.createElement("div");
+      row.className = "detail-row";
+      row.innerHTML = `<span>${escapeHtml(h.name)}</span><span class="val">${on ? "✓" : "—"}</span>`;
+      elDayHabitsList.appendChild(row);
+    }
+  }
+
+  // Pomos per activity
+  elDayPomoLine.textContent = `${pomos} pomos • ${stars.toFixed(1)} stars`;
+  elDayPomoList.innerHTML = "";
+  if (state.activities.length === 0) {
+    elDayPomoList.innerHTML = `<div class="muted">No activities yet.</div>`;
+  } else {
+    let any = false;
+    for (const a of state.activities) {
+      const log = a.log?.[iso];
+      const p = Number(log?.pomos || 0);
+      const m = Number(log?.minutes || 0);
+      if (p === 0 && m === 0) continue;
+      any = true;
+
+      const row = document.createElement("div");
+      row.className = "detail-row";
+      row.innerHTML = `
+        <span>${escapeHtml(a.name)}</span>
+        <span class="val">${p} pomos • ${pomosToStars(p).toFixed(1)}★ • ${m} min</span>
+      `;
+      elDayPomoList.appendChild(row);
+    }
+    if (!any) elDayPomoList.innerHTML = `<div class="muted">No pomodoros logged this day.</div>`;
+  }
+
+  // Tasks done on day
+  const tasksDone = state.tasks.filter(t => t.done && t.doneAt === iso);
+  elDayTasksLine.textContent = `${tasksDone.length} completed`;
+  elDayTasksList.innerHTML = "";
+  if (tasksDone.length === 0) {
+    elDayTasksList.innerHTML = `<div class="muted">No one-off tasks completed on this day.</div>`;
+  } else {
+    for (const t of tasksDone) {
+      const row = document.createElement("div");
+      row.className = "detail-row";
+      row.innerHTML = `<span>${escapeHtml(t.name)}</span><span class="val">${escapeHtml(t.cat || "—")}</span>`;
+      elDayTasksList.appendChild(row);
+    }
+  }
+
+  // Cardio entries
+  const entries = state.cardio?.[iso] || [];
+  elDayCardioLine.textContent =
+    entries.length === 0
+      ? "No cardio logged"
+      : `${entries.length} entries • ${cardio.km.toFixed(1)} km • ${Math.round(cardio.min)} min • ${Math.round(cardio.elev)} m • ${Math.round(cardio.cal)} cal`;
+
+  elDayCardioList.innerHTML = "";
+  if (entries.length === 0) {
+    elDayCardioList.innerHTML = `<div class="muted">No cardio entries on this day.</div>`;
+  } else {
+    const sorted = [...entries].sort((a, b) => (a.ts || 0) - (b.ts || 0));
+    for (const e of sorted) {
+      const row = document.createElement("div");
+      row.className = "detail-row";
+
+      const km = Number(e.distance_km || 0);
+      const min = Number(e.duration_min || 0);
+      const elev = Number(e.elev_m || 0);
+      const cal = Number(e.calories || 0);
+
+      row.innerHTML = `
+        <span>${new Date(e.ts || Date.now()).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}</span>
+        <span class="val">${(km || 0).toFixed(2)} km • ${Math.round(min)} min • ${Math.round(elev)} m • ${Math.round(cal)} cal</span>
+      `;
+
+      elDayCardioList.appendChild(row);
+    }
+  }
+}
+
+elDayModalBackdrop?.addEventListener("click", closeDayModal);
+elDayModalCloseBtn?.addEventListener("click", closeDayModal);
+
+elDayModalPrevBtn?.addEventListener("click", () => {
+  modalISO = dateAddDays(modalISO, -1);
+  renderDayModal();
+});
+elDayModalNextBtn?.addEventListener("click", () => {
+  modalISO = dateAddDays(modalISO, 1);
+  renderDayModal();
+});
+document.addEventListener("keydown", (e) => {
+  if (elDayModal.hidden) return;
+  if (e.key === "Escape") closeDayModal();
+});
 
 /* ---------- Export / Import / Wipe ---------- */
 
@@ -869,9 +1171,16 @@ elImportFile.addEventListener("change", async (e) => {
     if (!parsed || typeof parsed !== "object") throw new Error("bad json");
     if (!Array.isArray(parsed.habits) || !Array.isArray(parsed.tasks)) throw new Error("missing habits/tasks");
 
-    parsed.taskFilter ??= "all";
-    parsed.activities ??= [];
-    state = parsed;
+    state = normalizeState(parsed);
+
+    // if timer points to missing activity, clear it
+    if (timer.activityId && !getActivityById(timer.activityId)) {
+      timer.activityId = null;
+      timer.running = false;
+      timer.startedAtMs = null;
+      timer.mode = "work";
+      timer.remainingSec = 0;
+    }
 
     await persist();
     renderAll();
@@ -884,7 +1193,7 @@ elImportFile.addEventListener("change", async (e) => {
 });
 
 elWipeBtn.addEventListener("click", async () => {
-  if (!confirm("Wipe ALL data (habits, tasks, activities, history) from this browser?")) return;
+  if (!confirm("Wipe ALL data (habits, tasks, activities, cardio logs, history) from this browser?")) return;
   localStorage.removeItem(LS_KEY);
   localStorage.removeItem(LS_FILE_HINT_KEY);
   fileHandle = null;
@@ -918,7 +1227,6 @@ elResetTodayBtn.addEventListener("click", async () => {
   for (const h of state.habits) {
     if (h.history?.[TODAY]) h.history[TODAY] = false;
   }
-  // NOTE: intentionally does not reset activities
   await persist();
   renderAll();
 });
@@ -938,6 +1246,7 @@ elTaskForm.addEventListener("submit", async (e) => {
     due,
     cat,
     done: false,
+    doneAt: "",
     created: Date.now(),
   });
 
@@ -964,24 +1273,45 @@ elActivityForm.addEventListener("submit", async (e) => {
   const name = elActivityName.value.trim();
   if (!name) return;
 
-  const targetPomos = clampInt(elActivityTarget.value, 1, 12, 5);
   const workMin = clampInt(elActivityWork.value, 1, 180, 25);
   const breakMin = clampInt(elActivityBreak.value, 0, 60, 5);
 
   state.activities.push({
     id: uid(),
     name,
-    targetPomos,
     workMin,
     breakMin,
     log: {},
   });
 
   elActivityName.value = "";
-  elActivityTarget.value = String(targetPomos);
   elActivityWork.value = String(workMin);
   elActivityBreak.value = String(breakMin);
 
+  await persist();
+  renderAll();
+});
+
+/* cardio button */
+elAddCardioBtn?.addEventListener("click", async () => {
+  const dist = prompt("Distance (km):", "5");
+  if (dist == null) return;
+  const dur = prompt("Time (minutes):", "30");
+  if (dur == null) return;
+  const elev = prompt("Elevation gain (m), optional:", "");
+  if (elev == null) return;
+  const cal = prompt("Calories, optional:", "");
+  if (cal == null) return;
+
+  const entry = {
+    ts: Date.now(),
+    distance_km: Number(dist),
+    duration_min: Number(dur),
+    elev_m: elev === "" ? 0 : Number(elev),
+    calories: cal === "" ? 0 : Number(cal),
+  };
+
+  ensureCardioDay(TODAY).push(entry);
   await persist();
   renderAll();
 });
@@ -1001,6 +1331,10 @@ function renderAll() {
   renderHabits();
   renderTasks();
   renderStats();
+  renderCalendar();
+
+  // If modal open, keep it in sync
+  if (!elDayModal.hidden) renderDayModal();
 }
 
 persist();
