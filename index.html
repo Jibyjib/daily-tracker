@@ -1,3 +1,4 @@
+<!-- index.html -->
 <!doctype html>
 <html lang="en">
 <head>
@@ -35,17 +36,15 @@
       <div class="card span2">
         <div class="card-head">
           <h2>Timed Activities (Pomodoro / Minutes)</h2>
-          <div class="muted" id="activitySummary">—</div>
+          <div class="row wrapline" style="justify-content:flex-end; gap:8px;">
+            <button class="btn ghost" id="addCardioBtn" type="button">+ Cardio</button>
+            <div class="muted" id="activitySummary">—</div>
+          </div>
         </div>
 
         <form id="activityForm" class="row wrapline" style="align-items:flex-end;">
           <div class="inline" style="min-width:220px;">
-            <input id="activityName" class="input" placeholder="New activity (e.g., Cardio, Reading)" />
-          </div>
-
-          <div class="inline" style="max-width:140px;">
-            <label class="mini-label">Star steps</label>
-            <input id="activityTarget" class="input" type="number" min="1" max="12" value="5" />
+            <input id="activityName" class="input" placeholder="New activity (e.g., Reading, Deep Work)" />
           </div>
 
           <div class="inline" style="max-width:140px;">
@@ -124,7 +123,25 @@
         <div class="list" id="taskList"></div>
       </div>
 
-      <!-- Stats -->
+      <!-- Calendar -->
+      <div class="card span2">
+        <div class="card-head">
+          <h2>Calendar</h2>
+          <div class="row wrapline" style="justify-content:flex-end; gap:8px;">
+            <button class="btn ghost" id="calPrevBtn" type="button">◀</button>
+            <span class="pill" id="calMonthLabel">—</span>
+            <button class="btn ghost" id="calNextBtn" type="button">▶</button>
+          </div>
+        </div>
+
+        <div class="cal-weekdays">
+          <div>Sun</div><div>Mon</div><div>Tue</div><div>Wed</div><div>Thu</div><div>Fri</div><div>Sat</div>
+        </div>
+        <div class="calendar" id="calendarGrid"></div>
+        <div class="muted" style="margin-top:10px;">Click any day to open details.</div>
+      </div>
+
+      <!-- Stats + Import/Export -->
       <div class="card span2">
         <div class="card-head">
           <h2>Habit Stats (look-back)</h2>
@@ -152,12 +169,70 @@
         <details style="margin-top:12px;">
           <summary>Danger zone</summary>
           <div class="stack" style="margin-top:10px;">
-            <div class="muted">Deletes all habits, tasks, activities, and history (and clears the connected file reference).</div>
+            <div class="muted">Deletes all habits, tasks, activities, cardio logs, and history (and clears the connected file reference).</div>
             <button class="btn danger" id="wipeBtn" type="button">Wipe all data</button>
           </div>
         </details>
 
         <div class="footer muted">Stored in a JSON file if connected; otherwise localStorage.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Day Details modal -->
+  <div class="modal" id="dayModal" hidden>
+    <div class="modal-backdrop" id="dayModalBackdrop"></div>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="dayModalTitle">
+      <div class="modal-head">
+        <div class="modal-title">
+          <div class="k" id="dayModalTitle">Day Details</div>
+          <div class="muted" id="dayModalSubtitle">—</div>
+        </div>
+        <div class="modal-actions">
+          <button class="btn ghost" id="dayModalPrevBtn" type="button">◀</button>
+          <button class="btn ghost" id="dayModalNextBtn" type="button">▶</button>
+          <button class="btn danger" id="dayModalCloseBtn" type="button">Close</button>
+        </div>
+      </div>
+
+      <div class="modal-body">
+        <div class="day-summary" id="dayModalSummary"></div>
+
+        <div class="divider"></div>
+
+        <div class="detail-grid">
+          <div class="detail-card">
+            <div class="detail-head">
+              <div class="detail-title">Habits</div>
+              <div class="muted" id="dayHabitsLine">—</div>
+            </div>
+            <div class="detail-list" id="dayHabitsList"></div>
+          </div>
+
+          <div class="detail-card">
+            <div class="detail-head">
+              <div class="detail-title">Pomodoros</div>
+              <div class="muted" id="dayPomoLine">—</div>
+            </div>
+            <div class="detail-list" id="dayPomoList"></div>
+          </div>
+
+          <div class="detail-card">
+            <div class="detail-head">
+              <div class="detail-title">One-off tasks completed</div>
+              <div class="muted" id="dayTasksLine">—</div>
+            </div>
+            <div class="detail-list" id="dayTasksList"></div>
+          </div>
+
+          <div class="detail-card">
+            <div class="detail-head">
+              <div class="detail-title">Cardio (Strava-style)</div>
+              <div class="muted" id="dayCardioLine">—</div>
+            </div>
+            <div class="detail-list" id="dayCardioList"></div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
