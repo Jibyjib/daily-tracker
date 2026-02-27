@@ -1,21 +1,15 @@
-/* To-Do + Habit Tracker (File-backed via File System Access API)
-   - Works best in Chrome/Edge
-   - User clicks "Connect file" once, chooses tracker-data.json
-   - After that, autosaves to that file on every change
-   - Falls back to localStorage if API unavailable / not connected
+/*
+  To-Do + Habit Tracker + Timed Activities (Pomodoro + minutes)
+  - File-backed via File System Access API (Chrome/Edge)
+  - Falls back to localStorage
 */
 
 const LS_KEY = "todo_habit_tracker_v1";
-const LS_FILE_HINT_KEY = "todo_habit_tracker_file_hint_v1"; // just for UI label; cannot restore handle reliably
-const DEFAULT_STATE = () => ({
-  habits: [
-    { id: uid(), name: "Exercise", history: {} },
-    { id: uid(), name: "Read", history: {} },
-    { id: uid(), name: "Drink Water", history: {} },
-  ],
-  tasks: [],
-  taskFilter: "all",
-});
+const LS_FILE_HINT_KEY = "todo_habit_tracker_file_hint_v1";
+
+function uid() {
+  return Math.random().toString(16).slice(2) + "-" + Date.now().toString(16);
+}
 
 function todayISO() {
   const d = new Date();
@@ -28,11 +22,9 @@ function todayISO() {
 function formatNiceDate(iso) {
   const [y, m, d] = iso.split("-").map(Number);
   const dt = new Date(y, m - 1, d);
-  return dt.toLocaleDateString(undefined, { weekday: "short", year: "numeric", month: "short", day: "numeric" });
-}
-
-function uid() {
-  return Math.random().toString(16).slice(2) + "-" + Date.now().toString(16);
+  return dt.toLocaleDateString(undefined, {
+    weekday: "short", year: "numeric", month: "short", day: "numeric",
+  });
 }
 
 function escapeHtml(s) {
@@ -44,9 +36,7 @@ function escapeHtml(s) {
     .replaceAll("'", "&#039;");
 }
 
-function isoCompare(a, b) {
-  return a < b ? -1 : a > b ? 1 : 0;
-}
+function isoCompare(a, b) { return a < b ? -1 : a > b ? 1 : 0; }
 
 function dateAddDays(iso, days) {
   const [y, m, d] = iso.split("-").map(Number);
@@ -63,11 +53,28 @@ function isoRangeEndInclusive(endISO, daysBack) {
   return { start, end: endISO };
 }
 
-/* ---------- Storage Layer ---------- */
+/* ---------- State ---------- */
 
-const hasFSA = !!window.showOpenFilePicker; // basic check
-let fileHandle = null; // not persisted across sessions
+const DEFAULT_STATE = () => ({
+  habits: [
+    { id: uid(), name: "Exercise", history: {} },
+    { id: uid(), name: "Read", history: {} },
+    { id: uid(), name: "Drink Water", history: {} },
+  ],
+  tasks: [],
+  taskFilter: "all",
+  activities: [
+    // { id, name, targetPomos, workMin, breakMin, log: { "YYYY-MM-DD": { pomos, minutes, cardio: [] } } }
+  ],
+});
+
+const hasFSA = !!window.showOpenFilePicker;
+let fileHandle = null;
 let state = null;
+
+const TODAY = todayISO();
+
+/* ---------- Storage Layer ---------- */
 
 function loadLocalStorageState() {
   const raw = localStorage.getItem(LS_KEY);
@@ -76,11 +83,13 @@ function loadLocalStorageState() {
     localStorage.setItem(LS_KEY, JSON.stringify(seed));
     return seed;
   }
+
   try {
     const parsed = JSON.parse(raw);
     parsed.habits ??= [];
     parsed.tasks ??= [];
     parsed.taskFilter ??= "all";
+    parsed.activities ??= [];
     return parsed;
   } catch {
     localStorage.removeItem(LS_KEY);
@@ -98,9 +107,14 @@ async function readStateFromFile(handle) {
   const file = await handle.getFile();
   const text = await file.text();
   const parsed = JSON.parse(text);
+
   if (!parsed || typeof parsed !== "object") throw new Error("Bad JSON");
-  if (!Array.isArray(parsed.habits) || !Array.isArray(parsed.tasks)) throw new Error("Missing habits/tasks arrays");
+  if (!Array.isArray(parsed.habits) || !Array.isArray(parsed.tasks)) {
+    throw new Error("Missing habits/tasks arrays");
+  }
+
   parsed.taskFilter ??= "all";
+  parsed.activities ??= [];
   return parsed;
 }
 
@@ -110,21 +124,17 @@ async function writeStateToFile(handle, s) {
   await writable.close();
 }
 
-function setStatus(msg) {
-  elFileStatus.textContent = msg;
-}
+function setStatus(msg) { elFileStatus.textContent = msg; }
 
 async function persist() {
-  // Always keep localStorage as a fallback mirror
   saveLocalStorageState(state);
 
   if (fileHandle) {
     try {
       await writeStateToFile(fileHandle, state);
       setStatus(`Connected: ${localStorage.getItem(LS_FILE_HINT_KEY) || "tracker-data.json"} • autosaved`);
-    } catch (e) {
-      setStatus(`Connected, but save failed (permission?) • falling back to localStorage`);
-      // keep fileHandle but user may need to reconnect
+    } catch {
+      setStatus("Connected, but save failed (permission?) • falling back to localStorage");
     }
   } else {
     setStatus(hasFSA ? "Not connected • using localStorage" : "File API not available • using localStorage");
@@ -133,31 +143,25 @@ async function persist() {
 
 async function connectFile() {
   if (!hasFSA) {
-    alert("File System Access API not available in this browser. Use Chrome/Edge.");
+    alert("File System Access API not available in this browser.\nUse Chrome/Edge.");
     return;
   }
+
   try {
-    // Allow selecting existing or creating new via Save File Picker
     const handle = await window.showSaveFilePicker({
       suggestedName: "tracker-data.json",
       types: [{ description: "JSON", accept: { "application/json": [".json"] } }],
     });
 
-    // Request permission
     const perm = await handle.requestPermission({ mode: "readwrite" });
     if (perm !== "granted") throw new Error("Permission not granted");
 
     fileHandle = handle;
-    // UI hint (cannot restore handle after reload, but helps user remember filename)
     localStorage.setItem(LS_FILE_HINT_KEY, handle.name || "tracker-data.json");
 
-    // If file has content, try loading it; otherwise write current state into it
     let loaded = null;
-    try {
-      loaded = await readStateFromFile(handle);
-    } catch {
-      loaded = null;
-    }
+    try { loaded = await readStateFromFile(handle); } catch { loaded = null; }
+
     if (loaded) {
       state = loaded;
       await persist();
@@ -165,10 +169,9 @@ async function connectFile() {
       alert("Connected + loaded file.");
     } else {
       await persist();
-      alert("Connected. Writing current data to file.");
+      alert("Connected.\nWriting current data to file.");
     }
-  } catch (e) {
-    // user canceled is fine
+  } catch {
     setStatus("Not connected • using localStorage");
   }
 }
@@ -200,27 +203,32 @@ const elExportBtn = document.getElementById("exportBtn");
 const elImportBtn = document.getElementById("importBtn");
 const elImportFile = document.getElementById("importFile");
 const elWipeBtn = document.getElementById("wipeBtn");
-
 const elConnectFileBtn = document.getElementById("connectFileBtn");
 const elFileStatus = document.getElementById("fileStatus");
 
-/* ---------- App init ---------- */
+/* Timed activities */
+const elActivityForm = document.getElementById("activityForm");
+const elActivityName = document.getElementById("activityName");
+const elActivityTarget = document.getElementById("activityTarget");
+const elActivityWork = document.getElementById("activityWork");
+const elActivityBreak = document.getElementById("activityBreak");
+const elActivityList = document.getElementById("activityList");
+const elActivitySummary = document.getElementById("activitySummary");
 
-const TODAY = todayISO();
+const elTimerTitle = document.getElementById("timerTitle");
+const elTimerMode = document.getElementById("timerMode");
+const elTimerRemaining = document.getElementById("timerRemaining");
+const elTimerStartPauseBtn = document.getElementById("timerStartPauseBtn");
+const elTimerSkipBtn = document.getElementById("timerSkipBtn");
+const elTimerStopBtn = document.getElementById("timerStopBtn");
+
+/* ---------- Init ---------- */
+
 elTodayStr.textContent = formatNiceDate(TODAY);
-
 state = loadLocalStorageState();
+state.activities ??= [];
+
 setStatus(hasFSA ? "Not connected • using localStorage" : "File API not available • using localStorage");
-
-/* ---------- Rendering helpers ---------- */
-
-function checkIcon() {
-  return `
-    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-    </svg>
-  `;
-}
 
 /* ---------- Habits ---------- */
 
@@ -274,7 +282,6 @@ function renderHabits() {
     const check = document.createElement("button");
     check.className = "check" + (on ? " on" : "");
     check.type = "button";
-    check.innerHTML = checkIcon();
     check.title = "Toggle for today";
     check.addEventListener("click", async () => {
       h.history ??= {};
@@ -287,7 +294,7 @@ function renderHabits() {
     title.className = "item-title";
     title.innerHTML = `
       <div class="name">${escapeHtml(h.name)}</div>
-      <div class="meta">${habitMeta(h)}</div>
+      <div class="meta">${escapeHtml(habitMeta(h))}</div>
     `;
 
     const actions = document.createElement("div");
@@ -322,8 +329,9 @@ function taskIsOverdue(t) {
 }
 
 function renderTaskFilters() {
-  const cats = Array.from(new Set(state.tasks.map(t => (t.cat || "").trim()).filter(Boolean)))
-    .sort((a,b)=>a.localeCompare(b));
+  const cats = Array.from(new Set(
+    state.tasks.map(t => (t.cat || "").trim()).filter(Boolean)
+  )).sort((a, b) => a.localeCompare(b));
 
   const filters = [
     { key: "all", label: "All" },
@@ -383,7 +391,6 @@ function renderTasks() {
     const check = document.createElement("button");
     check.className = "check" + (t.done ? " on" : "");
     check.type = "button";
-    check.innerHTML = checkIcon();
     check.title = "Toggle";
     check.addEventListener("click", async () => {
       t.done = !t.done;
@@ -395,20 +402,16 @@ function renderTasks() {
     title.className = "item-title";
 
     const metaBits = [];
-    if (t.cat) metaBits.push(`<span class="pill">${escapeHtml(t.cat)}</span>`);
+    if (t.cat) metaBits.push(`${escapeHtml(t.cat)}`);
     if (t.due) {
       const dueNice = formatNiceDate(t.due);
-      const tag = taskIsOverdue(t)
-        ? `<span class="pill" style="border-color:rgba(251,113,133,.4);color:var(--text)">Overdue • ${escapeHtml(dueNice)}</span>`
-        : `<span class="pill">Due ${escapeHtml(dueNice)}</span>`;
+      const tag = taskIsOverdue(t) ? `Overdue • ${escapeHtml(dueNice)}` : `Due ${escapeHtml(dueNice)}`;
       metaBits.push(tag);
     }
 
     title.innerHTML = `
-      <div class="name" style="${t.done ? "text-decoration:line-through;opacity:.75" : ""}">
-        ${escapeHtml(t.name)}
-      </div>
-      <div class="meta">${metaBits.join(" ") || "<span class='muted'>—</span>"}</div>
+      <div class="name">${escapeHtml(t.name)}</div>
+      <div class="meta">${metaBits.join(" • ") || "—"}</div>
     `;
 
     const actions = document.createElement("div");
@@ -435,7 +438,7 @@ function renderTasks() {
   }
 }
 
-/* ---------- Stats ---------- */
+/* ---------- Habit stats ---------- */
 
 function computeHabitStats(daysBackOrNull) {
   const habits = state.habits;
@@ -449,7 +452,6 @@ function computeHabitStats(daysBackOrNull) {
 
   for (const h of habits) {
     const hist = h.history ?? {};
-
     if (start && end) {
       let cur = start;
       while (true) {
@@ -475,10 +477,369 @@ function renderStats() {
   const s90 = computeHabitStats(90);
   const sall = computeHabitStats(null);
 
-  elStat7.textContent   = s7.pct  == null ? "—" : `${s7.pct}% (${s7.hits}/${s7.possible})`;
-  elStat30.textContent  = s30.pct == null ? "—" : `${s30.pct}% (${s30.hits}/${s30.possible})`;
-  elStat90.textContent  = s90.pct == null ? "—" : `${s90.pct}% (${s90.hits}/${s90.possible})`;
-  elStatAll.textContent = sall.pct== null ? "—" : `${sall.pct}% (${sall.hits}/${sall.possible})`;
+  elStat7.textContent = s7.pct == null ? "—" : `${s7.pct}% (${s7.hits}/${s7.possible})`;
+  elStat30.textContent = s30.pct == null ? "—" : `${s30.pct}% (${s30.hits}/${s30.possible})`;
+  elStat90.textContent = s90.pct == null ? "—" : `${s90.pct}% (${s90.hits}/${s90.possible})`;
+  elStatAll.textContent = sall.pct == null ? "—" : `${sall.pct}% (${sall.hits}/${sall.possible})`;
+}
+
+/* ---------- Timed Activities ---------- */
+
+function ensureTodayLog(a) {
+  a.log ??= {};
+  a.log[TODAY] ??= { pomos: 0, minutes: 0, cardio: [] };
+  a.log[TODAY].pomos ??= 0;
+  a.log[TODAY].minutes ??= 0;
+  a.log[TODAY].cardio ??= [];
+  return a.log[TODAY];
+}
+
+function clampInt(x, lo, hi, fallback) {
+  const n = Number(x);
+  if (!Number.isFinite(n)) return fallback;
+  const k = Math.floor(n);
+  return Math.max(lo, Math.min(hi, k));
+}
+
+function starsHTML(done, target) {
+  const full = "★★★★★";
+  const frac = target <= 0 ? 0 : Math.max(0, Math.min(1, done / target));
+  const pct = Math.round(frac * 100);
+  return `
+    <span class="stars" title="${done}/${target}">
+      <span class="fill" style="width:${pct}%">${full}</span>${full}
+    </span>
+  `;
+}
+
+/* Timer model: single active timer */
+let timer = {
+  activityId: null,
+  mode: "work",          // "work" | "break"
+  remainingSec: 0,
+  running: false,
+  startedAtMs: null,     // for partial credit if stopped early
+  workSec: 25 * 60,
+  breakSec: 5 * 60,
+};
+
+let tickHandle = null;
+
+function formatMMSS(sec) {
+  const s = Math.max(0, Math.floor(sec));
+  const mm = String(Math.floor(s / 60)).padStart(2, "0");
+  const ss = String(s % 60).padStart(2, "0");
+  return `${mm}:${ss}`;
+}
+
+function getActivityById(id) {
+  return state.activities.find(a => a.id === id) || null;
+}
+
+function selectTimerActivity(activityId) {
+  const a = getActivityById(activityId);
+  if (!a) return;
+
+  timer.activityId = a.id;
+  timer.workSec = clampInt(a.workMin, 1, 180, 25) * 60;
+  timer.breakSec = clampInt(a.breakMin, 0, 60, 5) * 60;
+
+  if (!timer.running) {
+    timer.mode = "work";
+    timer.remainingSec = timer.workSec;
+    timer.startedAtMs = null;
+  }
+  renderTimer();
+}
+
+async function creditWorkSession(activityId, minutes, pomosInc) {
+  const a = getActivityById(activityId);
+  if (!a) return;
+
+  const log = ensureTodayLog(a);
+  log.minutes += minutes;
+  log.pomos += pomosInc;
+
+  await persist();
+  renderAll();
+}
+
+function startTimer() {
+  if (!timer.activityId) return;
+
+  if (!timer.running) {
+    timer.running = true;
+    timer.startedAtMs = Date.now();
+    if (!tickHandle) tickHandle = setInterval(tick, 250);
+  }
+  renderTimer();
+}
+
+function pauseTimer() {
+  timer.running = false;
+  timer.startedAtMs = null;
+  renderTimer();
+}
+
+async function stopTimer({ creditPartial = false } = {}) {
+  if (!timer.activityId) return;
+
+  if (creditPartial && timer.mode === "work" && timer.running && timer.startedAtMs) {
+    const elapsedMin = Math.max(0, Math.round((Date.now() - timer.startedAtMs) / 60000));
+    if (elapsedMin > 0) {
+      await creditWorkSession(timer.activityId, elapsedMin, 0);
+    }
+  }
+
+  timer.running = false;
+  timer.startedAtMs = null;
+  timer.mode = "work";
+  timer.remainingSec = timer.workSec;
+
+  renderTimer();
+}
+
+async function skipTimerPhase() {
+  if (!timer.activityId) return;
+
+  // If skipping work phase, don't credit.
+  timer.running = false;
+  timer.startedAtMs = null;
+
+  if (timer.mode === "work") {
+    timer.mode = "break";
+    timer.remainingSec = timer.breakSec;
+  } else {
+    timer.mode = "work";
+    timer.remainingSec = timer.workSec;
+  }
+
+  renderTimer();
+}
+
+async function onWorkComplete() {
+  await creditWorkSession(timer.activityId, Math.round(timer.workSec / 60), 1);
+  timer.mode = "break";
+  timer.remainingSec = timer.breakSec;
+  timer.running = false;
+  timer.startedAtMs = null;
+  renderTimer();
+}
+
+function onBreakComplete() {
+  timer.mode = "work";
+  timer.remainingSec = timer.workSec;
+  timer.running = false;
+  timer.startedAtMs = null;
+  renderTimer();
+}
+
+function tick() {
+  if (!timer.running) return;
+  timer.remainingSec -= 0.25;
+  if (timer.remainingSec <= 0) {
+    timer.remainingSec = 0;
+    const mode = timer.mode;
+    timer.running = false;
+    timer.startedAtMs = null;
+
+    if (mode === "work") {
+      onWorkComplete();
+    } else {
+      onBreakComplete();
+    }
+  }
+  renderTimer();
+}
+
+function renderTimer() {
+  const a = timer.activityId ? getActivityById(timer.activityId) : null;
+
+  if (!a) {
+    elTimerTitle.textContent = "No timer running";
+    elTimerMode.textContent = "—";
+    elTimerRemaining.textContent = "—";
+    elTimerStartPauseBtn.disabled = true;
+    elTimerSkipBtn.disabled = true;
+    elTimerStopBtn.disabled = true;
+    elTimerStartPauseBtn.textContent = "Start";
+    return;
+  }
+
+  elTimerTitle.textContent = a.name;
+  elTimerMode.textContent = timer.mode === "work" ? "Work" : "Break";
+  elTimerRemaining.textContent = formatMMSS(timer.remainingSec);
+
+  elTimerStartPauseBtn.disabled = false;
+  elTimerSkipBtn.disabled = false;
+  elTimerStopBtn.disabled = false;
+
+  elTimerStartPauseBtn.textContent = timer.running ? "Pause" : "Start";
+}
+
+function renderActivities() {
+  const total = state.activities.length;
+  let totalMinToday = 0;
+  let totalPomosToday = 0;
+
+  for (const a of state.activities) {
+    const log = a.log?.[TODAY];
+    if (log) {
+      totalMinToday += Number(log.minutes || 0);
+      totalPomosToday += Number(log.pomos || 0);
+    }
+  }
+
+  elActivitySummary.textContent =
+    total === 0
+      ? "No activities yet."
+      : `${totalPomosToday} pomos • ${totalMinToday} min today`;
+
+  elActivityList.innerHTML = "";
+
+  if (total === 0) {
+    elActivityList.innerHTML = `<div class="muted">Add an activity above (Reading, Cardio, etc.).</div>`;
+    return;
+  }
+
+  for (const a of state.activities) {
+    const row = document.createElement("div");
+    row.className = "item";
+
+    const left = document.createElement("div");
+    left.className = "item-left";
+
+    const title = document.createElement("div");
+    title.className = "item-title";
+
+    const log = ensureTodayLog(a);
+    const target = clampInt(a.targetPomos, 1, 12, 5);
+
+    const meta = document.createElement("div");
+    meta.className = "meta kv";
+    meta.innerHTML = `
+      ${starsHTML(log.pomos, target)}
+      <span class="pill"><strong>${log.pomos}</strong> / ${target} pomos</span>
+      <span class="pill"><strong>${log.minutes}</strong> min</span>
+      <span class="pill">${clampInt(a.workMin, 1, 180, 25)}m work</span>
+      <span class="pill">${clampInt(a.breakMin, 0, 60, 5)}m break</span>
+    `;
+
+    title.innerHTML = `<div class="name">${escapeHtml(a.name)}</div>`;
+    title.appendChild(meta);
+
+    const actions = document.createElement("div");
+    actions.className = "item-actions";
+
+    const btnStart = document.createElement("button");
+    btnStart.className = "btn";
+    btnStart.type = "button";
+    btnStart.textContent = (timer.activityId === a.id && timer.running) ? "Pause" : "Start";
+    btnStart.addEventListener("click", () => {
+      if (timer.activityId !== a.id) {
+        selectTimerActivity(a.id);
+      }
+      if (timer.running) pauseTimer(); else startTimer();
+    });
+
+    const btnStop = document.createElement("button");
+    btnStop.className = "btn ghost";
+    btnStop.type = "button";
+    btnStop.textContent = "Stop";
+    btnStop.addEventListener("click", async () => {
+      if (timer.activityId === a.id) {
+        await stopTimer({ creditPartial: false });
+      }
+    });
+
+    const btnPomo = document.createElement("button");
+    btnPomo.className = "btn ghost";
+    btnPomo.type = "button";
+    btnPomo.textContent = "+1 pomo";
+    btnPomo.addEventListener("click", async () => {
+      await creditWorkSession(a.id, clampInt(a.workMin, 1, 180, 25), 1);
+    });
+
+    const btnMinutes = document.createElement("button");
+    btnMinutes.className = "btn ghost";
+    btnMinutes.type = "button";
+    btnMinutes.textContent = "+minutes";
+    btnMinutes.addEventListener("click", async () => {
+      const raw = prompt(`Add minutes for "${a.name}" today:`, "30");
+      if (raw == null) return;
+      const mins = clampInt(raw, 1, 1440, 30);
+      await creditWorkSession(a.id, mins, 0);
+    });
+
+    const btnCardio = document.createElement("button");
+    btnCardio.className = "btn ghost";
+    btnCardio.type = "button";
+    btnCardio.textContent = "Cardio log";
+    btnCardio.addEventListener("click", async () => {
+      const dist = prompt("Distance (km), optional:", "");
+      if (dist == null) return;
+      const dur = prompt("Duration (minutes):", "30");
+      if (dur == null) return;
+      const kind = prompt("Type (run/bike/row/etc), optional:", "");
+      if (kind == null) return;
+
+      const a2 = getActivityById(a.id);
+      if (!a2) return;
+      const log2 = ensureTodayLog(a2);
+
+      const entry = {
+        ts: Date.now(),
+        type: (kind || "").trim(),
+        distance_km: dist === "" ? null : Number(dist),
+        duration_min: Number(dur),
+      };
+
+      log2.cardio.push(entry);
+      // Credit duration as minutes (no auto pomo unless you want)
+      if (Number.isFinite(entry.duration_min) && entry.duration_min > 0) {
+        log2.minutes += Math.floor(entry.duration_min);
+      }
+
+      await persist();
+      renderAll();
+    });
+
+    const btnDel = document.createElement("button");
+    btnDel.className = "btn danger";
+    btnDel.type = "button";
+    btnDel.textContent = "Delete";
+    btnDel.addEventListener("click", async () => {
+      if (!confirm(`Delete activity "${a.name}"? This removes all its logs.`)) return;
+
+      // If timer is on this activity, clear it
+      if (timer.activityId === a.id) {
+        timer.activityId = null;
+        timer.running = false;
+        timer.startedAtMs = null;
+        timer.mode = "work";
+        timer.remainingSec = 0;
+      }
+
+      state.activities = state.activities.filter(x => x.id !== a.id);
+      await persist();
+      renderAll();
+    });
+
+    actions.appendChild(btnStart);
+    actions.appendChild(btnStop);
+    actions.appendChild(btnPomo);
+    actions.appendChild(btnMinutes);
+    actions.appendChild(btnCardio);
+    actions.appendChild(btnDel);
+
+    left.appendChild(title);
+    row.appendChild(left);
+    row.appendChild(actions);
+
+    elActivityList.appendChild(row);
+  }
+
+  renderTimer();
 }
 
 /* ---------- Export / Import / Wipe ---------- */
@@ -500,13 +861,18 @@ elImportBtn.addEventListener("click", () => elImportFile.click());
 elImportFile.addEventListener("change", async (e) => {
   const file = e.target.files?.[0];
   if (!file) return;
+
   try {
     const text = await file.text();
     const parsed = JSON.parse(text);
+
     if (!parsed || typeof parsed !== "object") throw new Error("bad json");
     if (!Array.isArray(parsed.habits) || !Array.isArray(parsed.tasks)) throw new Error("missing habits/tasks");
+
     parsed.taskFilter ??= "all";
+    parsed.activities ??= [];
     state = parsed;
+
     await persist();
     renderAll();
     alert("Imported.");
@@ -518,11 +884,18 @@ elImportFile.addEventListener("change", async (e) => {
 });
 
 elWipeBtn.addEventListener("click", async () => {
-  if (!confirm("Wipe ALL data (habits, tasks, history) from this browser?")) return;
+  if (!confirm("Wipe ALL data (habits, tasks, activities, history) from this browser?")) return;
   localStorage.removeItem(LS_KEY);
   localStorage.removeItem(LS_FILE_HINT_KEY);
   fileHandle = null;
   state = DEFAULT_STATE();
+
+  timer.activityId = null;
+  timer.running = false;
+  timer.startedAtMs = null;
+  timer.mode = "work";
+  timer.remainingSec = 0;
+
   await persist();
   renderAll();
 });
@@ -533,8 +906,10 @@ elHabitForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   const name = elHabitName.value.trim();
   if (!name) return;
+
   state.habits.push({ id: uid(), name, history: {} });
   elHabitName.value = "";
+
   await persist();
   renderAll();
 });
@@ -543,12 +918,14 @@ elResetTodayBtn.addEventListener("click", async () => {
   for (const h of state.habits) {
     if (h.history?.[TODAY]) h.history[TODAY] = false;
   }
+  // NOTE: intentionally does not reset activities
   await persist();
   renderAll();
 });
 
 elTaskForm.addEventListener("submit", async (e) => {
   e.preventDefault();
+
   const name = elTaskName.value.trim();
   if (!name) return;
 
@@ -567,6 +944,7 @@ elTaskForm.addEventListener("submit", async (e) => {
   elTaskName.value = "";
   elTaskDue.value = "";
   elTaskCat.value = "";
+
   await persist();
   renderAll();
 });
@@ -579,9 +957,47 @@ elClearDoneTasksBtn.addEventListener("click", async () => {
 
 elConnectFileBtn.addEventListener("click", connectFile);
 
+/* activity form */
+elActivityForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+
+  const name = elActivityName.value.trim();
+  if (!name) return;
+
+  const targetPomos = clampInt(elActivityTarget.value, 1, 12, 5);
+  const workMin = clampInt(elActivityWork.value, 1, 180, 25);
+  const breakMin = clampInt(elActivityBreak.value, 0, 60, 5);
+
+  state.activities.push({
+    id: uid(),
+    name,
+    targetPomos,
+    workMin,
+    breakMin,
+    log: {},
+  });
+
+  elActivityName.value = "";
+  elActivityTarget.value = String(targetPomos);
+  elActivityWork.value = String(workMin);
+  elActivityBreak.value = String(breakMin);
+
+  await persist();
+  renderAll();
+});
+
+/* timer controls */
+elTimerStartPauseBtn.addEventListener("click", () => {
+  if (!timer.activityId) return;
+  if (timer.running) pauseTimer(); else startTimer();
+});
+elTimerSkipBtn.addEventListener("click", skipTimerPhase);
+elTimerStopBtn.addEventListener("click", () => stopTimer({ creditPartial: false }));
+
 /* ---------- Render ---------- */
 
 function renderAll() {
+  renderActivities();
   renderHabits();
   renderTasks();
   renderStats();
